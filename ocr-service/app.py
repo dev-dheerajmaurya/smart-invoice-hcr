@@ -581,3 +581,10 @@ def export_csv(payload: Dict[str, Any]):
     except Exception as e:
         print("CSV EXPORT ERROR >>>", repr(e))
         raise HTTPException(500, str(e))
+
+
+# =========================================================
+# VERCEL HANDLER
+# =========================================================
+# Export the app for Vercel serverless
+app_handler = app
