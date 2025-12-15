@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Document OCR Review</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 20px; }
+    .logo { 
+      font-size: 28px; 
+      font-weight: bold; 
+      color: #2c3e50; 
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 20px;
+      font-weight: bold;
+    }
+    .subtitle {
+      font-size: 14px;
+      color: #7f8c8d;
+      margin-bottom: 20px;
+    }
+    .container { display: flex; gap: 20px; align-items: flex-start; }
+    .left, .right { width: 50%; }
+    img { max-width: 100%; border: 1px solid #ccc; }
+    input, textarea { width: 100%; margin-bottom: 10px; padding: 8px; }
+    button { padding: 10px 14px; cursor: pointer; }
+    label { display: block; font-weight: 600; margin-top: 6px; margin-bottom: 4px; }
+    .controls { margin: 10px 0; display: flex; gap: 10px; align-items: center; }
+  </style>
+</head>
+<body>
+
+<div class="logo">
+  <div class="logo-icon">SI</div>
+  <span>Smart Invoice HCR</span>
+</div>
+<div class="subtitle">Scan → Correct → Learn</div>
+
+<div class="controls">
+  <input type="file" id="imageInput" accept="image/*" multiple />
+  <button onclick="uploadImages()">Upload & Analyze</button>
+  <span id="batchStatus" style="margin-left: 20px; font-weight: bold; color: #333;"></span>
+  <a href="/ui" target="_blank" style="margin-left:auto; font-size: 12px;">Reload</a>
+</div>
+
+<div id="batchNav" style="display:none; margin: 10px 0; padding: 10px; background: #f9f9f9; border-radius: 4px;">
+  <button onclick="prevImage()" style="margin-right:10px;">← Previous</button>
+  <span id="imageCounter" style="margin-right:20px; font-weight: bold;"></span>
+  <button onclick="nextImage()" style="margin-right:20px;">Next →</button>
+  <button onclick="deleteCurrent()" style="margin-right:20px; background:#ff6b6b; color:white;">Delete This Image</button>
+  <button onclick="saveDraft()" style="margin-right:10px;">Save as Draft</button>
+  <button onclick="exportCSV()" style="background:#28a745; color:white;">Continue (Export CSV)</button>
+</div>
+
+<div class="container">
+  <div class="left">
+    <h3>Document Image</h3>
+    <img id="docImage" alt="Annotated document will appear here" />
+  </div>
+
+  <div class="right">
+    <h3>Extracted Data (Editable)</h3>
+    <div id="fields"></div>
+    <button onclick="saveCorrections()">Save Corrections</button>
+
+    <h3 style="margin-top:20px;">Line Items (Editable)</h3>
+    <div id="lineItems"></div>
+  </div>
+</div>
+
+<script>
+let analysisResults = [];  // array of all analyzed images
+let currentIndex = 0;
+let batchMode = false;
+
+async function uploadImages() {
+  const fileInput = document.getElementById("imageInput");
+  const files = fileInput.files;
+  
+  if (!files || files.length === 0) {
+    alert("Please choose images first");
+    return;
+  }
+
+  analysisResults = [];
+  currentIndex = 0;
+  batchMode = files.length > 0;
+
+  // Analyze all images
+  for (let i = 0; i < files.length; i++) {
+    const formData = new FormData();
+    formData.append("file", files[i]);
+
+    try {
+      const res = await fetch("http://127.0.0.1:8000/analyze", {
+        method: "POST",
+        body: formData
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        console.error(`Image ${i+1} failed:`, txt);
+        continue;
+      }
+
+      const result = await res.json();
+      result._filename = files[i].name;
+      result._fileIndex = i;
+      analysisResults.push(result);
+    } catch (e) {
+      console.error(`Image ${i+1} error:`, e);
+    }
+  }
+
+  if (analysisResults.length === 0) {
+    alert("No images analyzed successfully");
+    return;
+  }
+
+  batchMode = analysisResults.length > 0;
+  currentIndex = 0;
+  showImage(0);
+}
+
+function showImage(index) {
+  if (index < 0 || index >= analysisResults.length) return;
+  currentIndex = index;
+  const result = analysisResults[index];
+
+  document.getElementById("docImage").src = "http://127.0.0.1:8000/" + result.annotated_image;
+  document.getElementById("batchNav").style.display = batchMode ? "block" : "none";
+  document.getElementById("imageCounter").textContent = `Image ${index + 1} of ${analysisResults.length}: ${result._filename}`;
+  document.getElementById("batchStatus").textContent = batchMode ? `Batch Mode (${analysisResults.length} images)` : "";
+
+  renderFields(result.fields);
+  renderLineItems(result.line_items);
+}
+
+function prevImage() {
+  if (currentIndex > 0) {
+    showImage(currentIndex - 1);
+  }
+}
+
+function nextImage() {
+  if (currentIndex < analysisResults.length - 1) {
+    showImage(currentIndex + 1);
+  }
+}
+
+function deleteCurrent() {
+  if (analysisResults.length === 1) {
+    alert("Cannot delete the only image. Upload new ones.");
+    return;
+  }
+  analysisResults.splice(currentIndex, 1);
+  if (currentIndex >= analysisResults.length) {
+    currentIndex = analysisResults.length - 1;
+  }
+  showImage(currentIndex);
+}
+
+async function saveCorrections() {
+  if (!analysisResults.length) {
+    alert("Run Analyze first");
+    return;
+  }
+
+  const result = analysisResults[currentIndex];
+  const corrections = [];
+
+  // top-level fields
+  document.querySelectorAll("input[data-field]").forEach(input => {
+    const fieldName = input.dataset.field;
+    const original = (result.fields[fieldName] || {}).value;
+    const corrected = input.value;
+    if (String(original) !== String(corrected)) {
+      corrections.push({
+        image_filename: result.original_image,
+        field_name: fieldName,
+        original_text: original,
+        corrected_text: corrected,
+        bbox: (result.fields[fieldName] || {}).bbox
+      });
+    }
+  });
+
+  // line items
+  document.querySelectorAll("input[data-row][data-colkey]").forEach(input => {
+    const rowIdx = input.dataset.row;
+    const colKey = input.dataset.colkey;
+    const origCell = findLineItemCell(rowIdx, colKey, result);
+    const original = origCell ? origCell.text : "";
+    const corrected = input.value;
+    if (String(original) !== String(corrected)) {
+      let bbox = null;
+      const bboxData = input.dataset.bbox;
+      if (bboxData) {
+        try { bbox = JSON.parse(bboxData); } catch (e) { bbox = null; }
+      }
+      corrections.push({
+        image_filename: result.original_image,
+        field_name: `line_items[row_${rowIdx}].${colKey}`,
+        original_text: original,
+        corrected_text: corrected,
+        bbox
+      });
+    }
+  });
+
+  for (const c of corrections) {
+    const res = await fetch("http://127.0.0.1:8000/corrections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(c)
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error("Failed saving correction:", txt);
+    }
+  }
+
+  alert("Corrections saved");
+}
+
+async function saveDraft() {
+  if (!analysisResults.length) {
+    alert("No images to save");
+    return;
+  }
+
+  const draftData = {
+    timestamp: new Date().toISOString(),
+    images: analysisResults.map((r, idx) => ({
+      index: idx,
+      filename: r._filename,
+      original_image: r.original_image,
+      annotated_image: r.annotated_image,
+      fields: r.fields,
+      line_items: r.line_items
+    }))
+  };
+
+  const res = await fetch("http://127.0.0.1:8000/draft", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draftData)
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    alert(`Draft saved with ID: ${data.draft_id}`);
+  } else {
+    alert("Failed to save draft");
+  }
+}
+
+async function exportCSV() {
+  if (!analysisResults.length) {
+    alert("No images to export");
+    return;
+  }
+
+  const res = await fetch("http://127.0.0.1:8000/export-csv", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ images: analysisResults })
+  });
+
+  if (res.ok) {
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `invoice_batch_${new Date().getTime()}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  } else {
+    alert("Failed to export CSV");
+  }
+}
+
+function findLineItemCell(rowIdx, colKey, result) {
+  const li = result && result.line_items;
+  if (!li || !li.rows) return null;
+  const row = li.rows.find(r => String(r.row) === String(rowIdx));
+  if (!row) return null;
+  return row.cells.find(c => c.key === colKey) || null;
+}
+
+function renderFields(fields) {
+  const container = document.getElementById("fields");
+  container.innerHTML = "";
+
+  for (const key in fields) {
+    const value = (fields[key] && fields[key].value) ? fields[key].value : "";
+    const safeVal = String(value).replace(/"/g, '&quot;');
+    container.innerHTML += `
+      <label>${key}</label>
+      <input data-field="${key}" value="${safeVal}" />
+    `;
+  }
+}
+
+function renderLineItems(data) {
+  const container = document.getElementById("lineItems");
+  if (!data || !data.rows || data.rows.length === 0) {
+    container.innerHTML = "<p>No line items detected.</p>";
+    return;
+  }
+
+  const cols = data.columns || [];
+  let html = '<table border="1" cellspacing="0" cellpadding="6" style="width:100%; border-collapse: collapse;">';
+  html += '<thead><tr><th>#</th>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+
+  data.rows.forEach(r => {
+    const isTotal = r.is_total || false;
+    const rowStyle = isTotal ? 'style="font-weight:bold; background:#f0f0f0;"' : '';
+    html += `<tr ${rowStyle}><td>${isTotal ? '' : r.row}</td>`;
+    r.cells.forEach(cell => {
+      const safeVal = String(cell.text || "").replace(/"/g, '&quot;');
+      const bboxAttr = cell.bbox ? `data-bbox='${JSON.stringify(cell.bbox)}'` : '';
+      const isTotal = cell.is_total || false;
+      const inputStyle = isTotal ? "width:100%; font-weight:bold;" : "width:100%;";
+      html += `<td><input data-row="${r.row}" data-colkey="${cell.key}" ${bboxAttr} value="${safeVal}" style="${inputStyle}" ${isTotal ? 'readonly' : ''} /></td>`;
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function findLineItemCell(rowIdx, colKey) {
+  const li = analysisResult && analysisResult.line_items;
+  if (!li || !li.rows) return null;
+  const row = li.rows.find(r => String(r.row) === String(rowIdx));
+  if (!row) return null;
+  return row.cells.find(c => c.key === colKey) || null;
+}
+
+async function saveCorrections() {
+  if (!analysisResult) {
+    alert("Run Analyze first");
+    return;
+  }
+
+  const corrections = [];
+
+  // top-level fields
+  document.querySelectorAll("input[data-field]").forEach(input => {
+    const fieldName = input.dataset.field;
+    const original = (analysisResult.fields[fieldName] || {}).value;
+    const corrected = input.value;
+    if (String(original) !== String(corrected)) {
+      corrections.push({
+        image_filename: analysisResult.original_image,
+        field_name: fieldName,
+        original_text: original,
+        corrected_text: corrected,
+        bbox: (analysisResult.fields[fieldName] || {}).bbox
+      });
+    }
+  });
+
+  // line items
+  document.querySelectorAll("input[data-row][data-colkey]").forEach(input => {
+    const rowIdx = input.dataset.row;
+    const colKey = input.dataset.colkey;
+    const origCell = findLineItemCell(rowIdx, colKey);
+    const original = origCell ? origCell.text : "";
+    const corrected = input.value;
+    if (String(original) !== String(corrected)) {
+      let bbox = null;
+      const bboxData = input.dataset.bbox;
+      if (bboxData) {
+        try { bbox = JSON.parse(bboxData); } catch (e) { bbox = null; }
+      }
+      corrections.push({
+        image_filename: analysisResult.original_image,
+        field_name: `line_items[row_${rowIdx}].${colKey}`,
+        original_text: original,
+        corrected_text: corrected,
+        bbox
+      });
+    }
+  });
+
+  for (const c of corrections) {
+    const res = await fetch("http://127.0.0.1:8000/corrections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(c)
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error("Failed saving correction:", txt);
+    }
+  }
+
+  alert("Corrections saved");
+}
+</script>
+
+<hr/>
+<h3>Saved Corrections</h3>
+<div class="controls">
+  <button onclick="loadCorrections()">Refresh Corrections</button>
+  <span style="font-size:12px;color:#666;">Showing latest 100</span>
+  <div style="margin-left:auto"></div>
+  <a href="/ui" target="_blank" style="font-size: 12px;">Reload UI</a>
+  
+</div>
+<table id="correctionsTable" border="1" cellspacing="0" cellpadding="6" style="width:100%; border-collapse: collapse;">
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Field</th>
+      <th>Original</th>
+      <th>Corrected</th>
+      <th>Snippet</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+  
+</table>
+
+<script>
+async function loadCorrections() {
+  const res = await fetch("http://127.0.0.1:8000/corrections?limit=100");
+  if (!res.ok) {
+    const txt = await res.text();
+    alert("Failed to load corrections: " + txt);
+    return;
+  }
+  const data = await res.json();
+  const tbody = document.querySelector('#correctionsTable tbody');
+  tbody.innerHTML = "";
+  (data.items || []).forEach(item => {
+    const tr = document.createElement('tr');
+    const esc = v => String(v ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const snippet = item.snippet_path ? `<img src="http://127.0.0.1:8000/${esc(item.snippet_path)}" style="max-width:140px;"/>` : '';
+    tr.innerHTML = `
+      <td>${esc(item.timestamp)}</td>
+      <td>${esc(item.field_name)}</td>
+      <td>${esc(item.original_text)}</td>
+      <td>${esc(item.corrected_text)}</td>
+      <td>${snippet}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// refresh list after saving
+const _oldSave = saveCorrections;
+window.saveCorrections = async function() {
+  await _oldSave();
+  await loadCorrections();
+}
+
+// initial load on UI open
+loadCorrections();
+</script>
+
+</body>
+</html>

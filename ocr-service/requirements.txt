@@ -1,0 +1,10 @@
+fastapi>=0.95
+uvicorn[standard]>=0.22
+python-multipart
+pillow
+opencv-python-headless
+numpy
+aiofiles
+sqlalchemy
+azure-ai-formrecognizer==3.3.3
+python-dotenv>=1.0.0
