@@ -1,20 +1,8 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "ocr-service/app.py",
-      "use": "@vercel/python"
+      "source": "/(.*)",
+      "destination": "/api/index"
     }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "ocr-service/app.py"
-    }
-  ],
-  "env": {
-    "AZURE_FORM_ENDPOINT": "@azure_form_endpoint",
-    "AZURE_FORM_KEY": "@azure_form_key",
-    "AZURE_MODEL_ID": "@azure_model_id"
-  }
+  ]
 }

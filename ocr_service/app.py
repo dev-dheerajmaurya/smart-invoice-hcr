@@ -586,5 +586,5 @@ def export_csv(payload: Dict[str, Any]):
 # =========================================================
 # VERCEL HANDLER
 # =========================================================
-# Export the app for Vercel serverless
-app_handler = app
+# Vercel expects a handler function or app object
+handler = app
